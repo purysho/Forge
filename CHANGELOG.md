@@ -2,6 +2,14 @@
 
 All notable changes to Forge are documented here.
 
+## [1.0.2] - 2026-09-26
+
+### Fixed
+- A command's Timeout and Stop terminated only the shell that launched it: the command itself kept running, and Forge waited for it to finish. Commands now run in their own process group, and the whole group is stopped.
+
+### Added
+- Behavioural tests covering the areas above and the rest of the core.
+
 ## [1.0.1] - 2026-09-26
 
 ### Added

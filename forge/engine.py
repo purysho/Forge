@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, shutil, subprocess, sys, threading, time, urllib.error, urllib.request
+import os, shutil, signal, subprocess, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
 from typing import Callable
 from .models import Step,Workflow
@@ -10,9 +10,26 @@ class WorkflowRunner:
     def __init__(self,logger:Callable[[str],None]|None=None): self.logger=logger or (lambda _:None); self.stop_event=threading.Event(); self._process=None
     def stop(self):
         self.stop_event.set()
-        if self._process and self._process.poll() is None:
-            try:self._process.terminate()
+        if self._process and self._process.poll() is None: self._kill_tree(self._process)
+    @staticmethod
+    def _kill_tree(process):
+        # Commands run through a shell, so terminating only the shell would leave
+        # the real command running and holding the output pipe open.
+        try:
+            if os.name=="nt": subprocess.run(["taskkill","/T","/F","/PID",str(process.pid)],capture_output=True,check=False)
+            else: os.killpg(process.pid,signal.SIGTERM)
+        except (OSError,ProcessLookupError):
+            try:process.terminate()
             except OSError:pass
+    def _halt(self,reader):
+        self._kill_tree(self._process)
+        try:self._process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            if os.name!="nt":
+                try:os.killpg(self._process.pid,signal.SIGKILL)
+                except OSError:pass
+            self._process.kill(); self._process.wait(timeout=3)
+        reader.join(timeout=3)
     def run(self,workflow:Workflow):
         self.stop_event.clear(); self.logger(f"▶ {workflow.name} — {len(workflow.steps)} step(s)")
         for i,step in enumerate(workflow.steps,1):
@@ -29,19 +46,20 @@ class WorkflowRunner:
     def _step_command(self,step):
         cmd=str(step.config.get("command","")).strip(); cwd=str(step.config.get("cwd","")).strip() or None
         if not cmd: raise ValueError("Command is empty")
-        self._process=subprocess.Popen(cmd,cwd=cwd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace"); start=time.monotonic(); assert self._process.stdout is not None
+        group={"creationflags":subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=="nt" else {"start_new_session":True}
+        self._process=subprocess.Popen(cmd,cwd=cwd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",**group); start=time.monotonic(); assert self._process.stdout is not None
         def pump():
             assert self._process and self._process.stdout
             for line in self._process.stdout:self.logger("    "+line.rstrip())
         reader=threading.Thread(target=pump,daemon=True); reader.start()
         while True:
-            if self.stop_event.is_set(): self._process.terminate(); self._process.wait(timeout=3); reader.join(timeout=1); self._process.stdout.close(); raise WorkflowStopped()
+            if self.stop_event.is_set(): self._halt(reader); raise WorkflowStopped()
             code=self._process.poll()
             if code is not None:
                 reader.join(timeout=1); self._process.stdout.close()
                 if code!=0: raise RuntimeError(f"Command exited with code {code}")
                 return
-            if step.timeout and time.monotonic()-start>step.timeout:self._process.terminate(); self._process.wait(timeout=3); reader.join(timeout=1); self._process.stdout.close(); raise TimeoutError(f"Command exceeded {step.timeout:g}s timeout")
+            if step.timeout and time.monotonic()-start>step.timeout:self._halt(reader); raise TimeoutError(f"Command exceeded {step.timeout:g}s timeout")
             time.sleep(.05)
     def _step_copy(self,step):
         s=Path(str(step.config.get("source",""))).expanduser(); t=Path(str(step.config.get("target",""))).expanduser()
