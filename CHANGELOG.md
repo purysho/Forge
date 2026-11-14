@@ -9,6 +9,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`, `docs/V1_RELEASE_CHECKLIST.md` and `docs/RECORDING_GUIDE.md`.
 - README: a comparison with the well-known alternatives, and links to the rest of the Depot suite.
 
+- `WorkflowRunner(on_event=...)`: optional structured progress (step started, succeeded, failed with the command's PID and exit code, run finished) for programs that drive Forge, such as Depot. Log output is unchanged.
+
 ### Changed
 - `SECURITY.md` now states supported versions, response times and the threat model.
 - The bug report form asks for the run method and the expected behaviour.

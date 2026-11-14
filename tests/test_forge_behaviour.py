@@ -141,3 +141,50 @@ class ModelAndStorageTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StructuredEventTests(unittest.TestCase):
+    """on_event gives programs that drive Forge (Depot) progress without parsing log text."""
+
+    def run_with_events(self, *steps):
+        events = []
+        ok = WorkflowRunner(lambda _: None, on_event=lambda kind, data: events.append((kind, data))).run(Workflow('t', list(steps)))
+        return ok, events
+
+    def test_success_reports_each_step_and_completion(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok, events = self.run_with_events(Step('mkdir', {'path': str(Path(d) / 'a')}))
+        self.assertTrue(ok)
+        self.assertEqual([k for k, _ in events], ['step_started', 'step_succeeded', 'run_finished'])
+        self.assertEqual(events[0][1]['type'], 'mkdir')
+        self.assertEqual(events[-1][1], {'outcome': 'completed', 'failed_steps': 0})
+
+    def test_failed_command_reports_its_pid_and_exit_code(self):
+        ok, events = self.run_with_events(Step('command', {'command': f'{PY} -c "import sys; sys.exit(3)"'}))
+        self.assertFalse(ok)
+        failed = dict(events)['step_failed']
+        self.assertIsInstance(failed['pid'], int)
+        self.assertEqual(failed['exit_code'], 3)
+        self.assertEqual(events[-1], ('run_finished', {'outcome': 'failed', 'failed_steps': 1}))
+
+    def test_non_command_failure_has_no_pid(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok, events = self.run_with_events(Step('copy', {'source': str(Path(d) / 'missing'), 'target': str(Path(d) / 'x')}))
+        failed = dict(events)['step_failed']
+        self.assertIsNone(failed['pid']); self.assertIsNone(failed['exit_code'])
+
+    def test_continue_on_error_completes_and_counts_failures(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok, events = self.run_with_events(
+                Step('copy', {'source': str(Path(d) / 'missing'), 'target': str(Path(d) / 'x')}, continue_on_error=True),
+                Step('mkdir', {'path': str(Path(d) / 'b')}))
+        self.assertTrue(ok)
+        self.assertEqual(events[-1], ('run_finished', {'outcome': 'completed', 'failed_steps': 1}))
+
+    def test_a_broken_handler_does_not_break_the_run(self):
+        log = []
+        def boom(kind, data): raise RuntimeError('handler bug')
+        with tempfile.TemporaryDirectory() as d:
+            ok = WorkflowRunner(log.append, on_event=boom).run(Workflow('t', [Step('mkdir', {'path': str(Path(d) / 'a')})]))
+        self.assertTrue(ok)
+        self.assertTrue(any('event handler failed' in line for line in log))

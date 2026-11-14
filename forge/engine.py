@@ -1,13 +1,30 @@
 from __future__ import annotations
 import os, shutil, signal, subprocess, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from .models import Step,Workflow
 
 class WorkflowStopped(RuntimeError): pass
 
 class WorkflowRunner:
-    def __init__(self,logger:Callable[[str],None]|None=None): self.logger=logger or (lambda _:None); self.stop_event=threading.Event(); self._process=None
+    """Runs a workflow's steps in order.
+
+    ``logger`` receives human-readable log lines. ``on_event`` (optional)
+    receives structured progress for programs that drive Forge, such as Depot:
+    ``on_event(kind, data)`` with kind one of ``step_started``,
+    ``step_succeeded``, ``step_failed`` or ``run_finished`` (``outcome`` is
+    ``completed``, ``failed`` or ``stopped``, with a ``failed_steps`` count, so a
+    run that continued past errors is ``completed`` with ``failed_steps`` > 0).
+    ``data`` is a
+    plain dict (see ``_emit`` calls below); ``step_failed`` includes the PID
+    of the command that failed, or ``None`` for non-command steps.
+    """
+    def __init__(self,logger:Callable[[str],None]|None=None,on_event:Callable[[str,dict[str,Any]],None]|None=None):
+        self.logger=logger or (lambda _:None); self.on_event=on_event; self.stop_event=threading.Event(); self._process=None; self._last_pid=None
+    def _emit(self,kind:str,**data:Any)->None:
+        if self.on_event is None: return
+        try: self.on_event(kind,data)
+        except Exception as exc: self.logger(f"  (event handler failed: {exc})")
     def stop(self):
         self.stop_event.set()
         if self._process and self._process.poll() is None: self._kill_tree(self._process)
@@ -32,22 +49,30 @@ class WorkflowRunner:
         reader.join(timeout=3)
     def run(self,workflow:Workflow):
         self.stop_event.clear(); self.logger(f"▶ {workflow.name} — {len(workflow.steps)} step(s)")
+        failed_steps=0
         for i,step in enumerate(workflow.steps,1):
-            if self.stop_event.is_set(): self.logger("■ Stopped"); return False
+            if self.stop_event.is_set(): self.logger("■ Stopped"); self._emit("run_finished",outcome="stopped",failed_steps=failed_steps); return False
             self.logger(f"[{i}/{len(workflow.steps)}] {step.label()}")
-            try:self._run_step(step); self.logger("  ✓ done")
-            except WorkflowStopped:self.logger("■ Stopped"); return False
+            self._last_pid=None; started=time.monotonic()
+            self._emit("step_started",index=i-1,step_id=step.id,type=step.type,label=step.label())
+            try:
+                self._run_step(step); self.logger("  ✓ done")
+                self._emit("step_succeeded",index=i-1,step_id=step.id,duration_ms=round((time.monotonic()-started)*1000))
+            except WorkflowStopped:self.logger("■ Stopped"); self._emit("run_finished",outcome="stopped",failed_steps=failed_steps); return False
             except Exception as exc:
                 self.logger(f"  ✕ {exc}")
-                if not step.continue_on_error:self.logger("Workflow halted"); return False
+                code=self._process.returncode if step.type=="command" and self._process is not None else None
+                self._emit("step_failed",index=i-1,step_id=step.id,label=step.label(),error=str(exc),pid=self._last_pid,exit_code=code)
+                failed_steps+=1
+                if not step.continue_on_error:self.logger("Workflow halted"); self._emit("run_finished",outcome="failed",failed_steps=failed_steps); return False
                 self.logger("  ↳ continuing because continue-on-error is enabled")
-        self.logger("✓ Workflow complete"); return True
+        self.logger("✓ Workflow complete"); self._emit("run_finished",outcome="completed",failed_steps=failed_steps); return True
     def _run_step(self,step): getattr(self,f"_step_{step.type}")(step)
     def _step_command(self,step):
         cmd=str(step.config.get("command","")).strip(); cwd=str(step.config.get("cwd","")).strip() or None
         if not cmd: raise ValueError("Command is empty")
         group={"creationflags":subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=="nt" else {"start_new_session":True}
-        self._process=subprocess.Popen(cmd,cwd=cwd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",**group); start=time.monotonic(); assert self._process.stdout is not None
+        self._process=subprocess.Popen(cmd,cwd=cwd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",**group); self._last_pid=self._process.pid; start=time.monotonic(); assert self._process.stdout is not None
         def pump():
             assert self._process and self._process.stdout
             for line in self._process.stdout:self.logger("    "+line.rstrip())
