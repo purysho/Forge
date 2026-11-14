@@ -13,6 +13,8 @@
 
 ![Forge after running a six-step backup workflow, with its run log](docs/screenshot.png)
 
+> 📹 Demo GIF coming in the next release. See the screenshot above for the current UI.
+
 ## What it does
 
 - Named reusable workflows
@@ -21,6 +23,30 @@
 - Per-step timeout and continue-on-error controls
 - Live execution log and stop support
 - Portable .forge.json import/export
+
+## Why not make, GitHub Actions, just or shell scripts?
+
+| Tool | What it does better | Where Forge differs |
+|---|---|---|
+| [`make`](https://www.gnu.org/software/make/) | Dependency graphs and incremental rebuilds: only what changed is rebuilt. | Forge runs steps top to bottom every time, with no dependency tracking. It is for sequences, not builds. |
+| [GitHub Actions](https://docs.github.com/actions) | Runs on pushes, pull requests and schedules, on hosted machines, with secrets and matrices. | Forge runs only on your machine and only when you press **Run**. |
+| [`just`](https://github.com/casey/just) | Named recipes with arguments in a `justfile` that lives in the repository and is reviewed like code. | If the commands belong to one project and its team, use `just`. Forge workflows are personal and live outside any repository. |
+| Shell scripts | The most flexible option: variables, conditionals, loops, pipes. | Forge has none of those. It gives you file and HTTP steps without shell syntax, a per-step timeout, a live log, and a **Stop** button that ends the whole process tree. |
+
+These are great tools, and each is more capable than Forge. The difference is operational, not technical: Forge is a single portable download, needs no account, no server, no Docker, and no configuration to start, and stores everything locally under `~/.forge/`. If you already use one of the tools above and it works for you, keep using it. Forge exists for the handful of personal multi-step chores you would otherwise retype, with zero setup and no cloud dependency.
+
+## Part of the Depot suite
+
+Depot (in development) brings these tools together in one app — shared workspace
+context, an event bus that connects them, and a unified session timeline.
+
+[Depot](https://github.com/purysho/Depot) ·
+[Switchyard](https://github.com/purysho/Switchyard) ·
+[Needle](https://github.com/purysho/Needle) ·
+[Relay](https://github.com/purysho/Relay) ·
+[Pulse](https://github.com/purysho/Pulse) ·
+[BLACKBOX](https://github.com/purysho/BLACKBOX) ·
+[Forge](https://github.com/purysho/Forge)
 
 ## Download
 
@@ -69,6 +95,10 @@ Forge executes workflows the user creates or imports. Imported workflows should 
 - Every push runs tests/compile checks and builds a Windows executable artifact.
 - Tags matching `v*` build the executable again, compute SHA256, and publish both files to GitHub Releases.
 - See [CHANGELOG.md](CHANGELOG.md) for release history.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 
