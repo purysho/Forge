@@ -26,6 +26,9 @@ class WorkflowRunner:
         try: self.on_event(kind,data)
         except Exception as exc: self.logger(f"  (event handler failed: {exc})")
     def stop(self):
+        """Stop the current run, or the next one if none has started yet. The
+        stop sticks until ``reset()``, so a run starting after a stop request
+        stops at once instead of clearing it."""
         self.stop_event.set()
         if self._process and self._process.poll() is None: self._kill_tree(self._process)
     @staticmethod
@@ -38,17 +41,35 @@ class WorkflowRunner:
         except (OSError,ProcessLookupError):
             try:process.terminate()
             except OSError:pass
-    def _halt(self,reader):
+    def reset(self):
+        """Allow another run after ``stop()``. Call before reusing a runner."""
+        self.stop_event.clear()
+    @staticmethod
+    def _group_alive(pgid):
+        try: os.killpg(pgid,0)
+        except ProcessLookupError: return False
+        except PermissionError: return True
+        return True
+    def _halt(self,reader,grace=3.0):
+        # Wait for the command's whole process group, not just its shell: a
+        # shell can exit on SIGTERM while a child that ignores it lives on.
         self._kill_tree(self._process)
-        try:self._process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            if os.name!="nt":
-                try:os.killpg(self._process.pid,signal.SIGKILL)
+        if os.name!="nt":
+            pgid=self._process.pid; deadline=time.monotonic()+grace
+            while time.monotonic()<deadline and self._group_alive(pgid):
+                self._process.poll(); time.sleep(.05)
+            if self._group_alive(pgid):
+                try:os.killpg(pgid,signal.SIGKILL)
                 except OSError:pass
-            self._process.kill(); self._process.wait(timeout=3)
+            deadline=time.monotonic()+grace
+            while time.monotonic()<deadline and self._group_alive(pgid):
+                self._process.poll(); time.sleep(.05)
+        try:self._process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            self._process.kill(); self._process.wait(timeout=grace)
         reader.join(timeout=3)
     def run(self,workflow:Workflow):
-        self.stop_event.clear(); self.logger(f"▶ {workflow.name} — {len(workflow.steps)} step(s)")
+        self.logger(f"▶ {workflow.name} — {len(workflow.steps)} step(s)")
         failed_steps=0
         for i,step in enumerate(workflow.steps,1):
             if self.stop_event.is_set(): self.logger("■ Stopped"); self._emit("run_finished",outcome="stopped",failed_steps=failed_steps); return False

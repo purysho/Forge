@@ -104,7 +104,7 @@ class ForgeApp(tk.Tk):
         if not f:return
         if any(s.type=="delete" for s in f.steps) and not messagebox.askyesno("Forge","This workflow contains a delete step. Review it carefully before continuing.\n\nRun anyway?",parent=self):return
         self.running=True; self.log.delete("1.0","end")
-        def work():self.runner.run(f); self.after(0,lambda:setattr(self,"running",False))
+        def work():self.runner.reset(); self.runner.run(f); self.after(0,lambda:setattr(self,"running",False))
         threading.Thread(target=work,daemon=True).start()
     def _log_threadsafe(self,line):self.after(0,lambda:self._append(line))
     def _append(self,line):self.log.insert("end",line+"\n"); self.log.see("end")

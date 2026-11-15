@@ -85,6 +85,35 @@ class CommandStepTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 10); time.sleep(0.3)
             self.assertFalse(self._pid_alive(int(pidfile.read_text())), 'the command survived Stop')
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX signals; Windows stops trees with taskkill /T /F')
+    def test_stop_kills_a_child_that_ignores_sigterm_after_its_shell_exits(self):
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = Path(d) / 'pid'
+            child = Path(d) / 'stubborn.py'
+            child.write_text(
+                'import os, signal, time, pathlib\n'
+                'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                f'pathlib.Path(r"{pidfile}").write_text(str(os.getpid()))\n'
+                'time.sleep(60)\n', encoding='utf-8')
+            # The shell dies on SIGTERM; the child it started does not.
+            cmd = f'{PY} "{child}" & wait'
+            runner = WorkflowRunner()
+            def stop_when_started():
+                while not pidfile.exists(): time.sleep(0.05)
+                runner.stop()
+            threading.Thread(target=stop_when_started, daemon=True).start()
+            self.assertFalse(runner.run(Workflow('t', [Step('command', {'command': cmd})])))
+            self.assertFalse(self._pid_alive(int(pidfile.read_text())), 'Forge said stopped while the command ran on')
+
+    def test_a_stop_before_the_run_starts_is_not_forgotten(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / 'x'
+            runner = WorkflowRunner(); runner.stop()
+            self.assertFalse(runner.run(Workflow('t', [Step('write', {'path': str(out), 'content': 'x'})])))
+            self.assertFalse(out.exists())
+            runner.reset()
+            self.assertTrue(runner.run(Workflow('t', [Step('write', {'path': str(out), 'content': 'x'})])))
+
     def test_stop_interrupts_a_wait(self):
         runner = WorkflowRunner(); threading.Timer(0.2, runner.stop).start(); started = time.monotonic()
         self.assertFalse(runner.run(Workflow('t', [Step('wait', {'seconds': 30})])))
