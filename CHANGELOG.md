@@ -6,6 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Commands and the open step inherited Forge's standard input. A command that read stdin could take input meant for whatever drives Forge (Depot sends its requests on its sidecar's stdin); commands now get an empty stdin.
 - Stopping a command could report "stopped" while it ran on: Forge waited only for the command's shell, so a program the shell started that ignored SIGTERM survived. Stop (and timeouts) now wait for the whole process group and kill whatever remains (macOS and Linux; Windows already ends the tree with `taskkill /T /F`).
 - A stop requested just before a run started was forgotten when the run began. Stop now holds until `WorkflowRunner.reset()`, which the app calls before each run.
 - A file step with a blank path acted on the folder Forge was running in: a blank **delete** step deleted its contents. Blank paths are now refused, and a delete may not target a drive root, your home folder, the folder Forge runs in, or a folder containing one of those.

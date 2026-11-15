@@ -105,6 +105,24 @@ class CommandStepTests(unittest.TestCase):
             self.assertFalse(runner.run(Workflow('t', [Step('command', {'command': cmd})])))
             self.assertFalse(self._pid_alive(int(pidfile.read_text())), 'Forge said stopped while the command ran on')
 
+    def test_a_command_gets_an_empty_stdin_not_forges(self):
+        # Forge runs in a child whose stdin carries data, as depot-core's does
+        # (Depot's requests); the command must not see any of it.
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / 'read.txt'
+            cmd = f'{PY} -c "import sys, pathlib; pathlib.Path(r\'{out}\').write_text(repr(sys.stdin.read()))"'
+            driver = (
+                'import sys; sys.path.insert(0, sys.argv[1]); from forge.engine import WorkflowRunner; '
+                'from forge.models import Step, Workflow; '
+                'sys.exit(0 if WorkflowRunner().run(Workflow("t", [Step("command", {"command": sys.argv[2]})])) else 1)'
+            )
+            root = str(Path(__file__).resolve().parents[1])
+            done = subprocess.run([sys.executable, '-c', driver, root, cmd], input='{"id": 101, "method": "core.ping"}\n',
+                                  text=True, capture_output=True, timeout=60)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(out.read_text(), "''")
+
     def test_a_stop_before_the_run_starts_is_not_forgotten(self):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / 'x'

@@ -93,7 +93,9 @@ class WorkflowRunner:
         cmd=str(step.config.get("command","")).strip(); cwd=str(step.config.get("cwd","")).strip() or None
         if not cmd: raise ValueError("Command is empty")
         group={"creationflags":subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=="nt" else {"start_new_session":True}
-        self._process=subprocess.Popen(cmd,cwd=cwd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",**group); self._last_pid=self._process.pid; start=time.monotonic(); assert self._process.stdout is not None
+        # stdin=DEVNULL: a command must not read whatever drives Forge (Depot
+        # sends its requests on depot-core's stdin).
+        self._process=subprocess.Popen(cmd,cwd=cwd,shell=True,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",**group); self._last_pid=self._process.pid; start=time.monotonic(); assert self._process.stdout is not None
         def pump():
             assert self._process and self._process.stdout
             for line in self._process.stdout:self.logger("    "+line.rstrip())
@@ -157,5 +159,5 @@ class WorkflowRunner:
         path=str(step.config.get("path","")).strip()
         if not path: raise ValueError("Open path is empty")
         if os.name=="nt":os.startfile(path)
-        elif sys.platform=="darwin":subprocess.Popen(["open",path])
-        else:subprocess.Popen(["xdg-open",path])
+        elif sys.platform=="darwin":subprocess.Popen(["open",path],stdin=subprocess.DEVNULL)
+        else:subprocess.Popen(["xdg-open",path],stdin=subprocess.DEVNULL)
