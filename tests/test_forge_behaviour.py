@@ -188,3 +188,51 @@ class StructuredEventTests(unittest.TestCase):
             ok = WorkflowRunner(log.append, on_event=boom).run(Workflow('t', [Step('mkdir', {'path': str(Path(d) / 'a')})]))
         self.assertTrue(ok)
         self.assertTrue(any('event handler failed' in line for line in log))
+
+
+class PathSafetyTests(unittest.TestCase):
+    """A blank path means the current folder to pathlib; Forge must refuse it, not act on it."""
+
+    def test_blank_paths_are_refused_and_nothing_is_touched(self):
+        with tempfile.TemporaryDirectory() as d:
+            keep = Path(d) / "keep.txt"
+            keep.write_text("x")
+            old = os.getcwd()
+            os.chdir(d)
+            try:
+                for step in (
+                    Step('delete', {'path': ''}),
+                    Step('delete', {'path': '   '}),
+                    Step('delete', {}),
+                    Step('mkdir', {'path': ''}),
+                    Step('write', {'path': '', 'content': 'x'}),
+                    Step('copy', {'source': '', 'target': str(Path(d) / 'out')}),
+                    Step('move', {'source': str(keep), 'target': ''}),
+                ):
+                    ok, log = run(step)
+                    self.assertFalse(ok, step.config)
+                    self.assertTrue(any('is empty' in line for line in log), log)
+            finally:
+                os.chdir(old)
+            self.assertTrue(keep.exists())
+
+    def test_delete_refuses_home_root_and_the_running_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = os.getcwd()
+            os.chdir(d)
+            try:
+                for target in ('.', d, str(Path(d).parent), str(Path.home()), Path(d).anchor):
+                    ok, log = run(Step('delete', {'path': target}))
+                    self.assertFalse(ok, target)
+                    self.assertTrue(any('Refusing to delete' in line for line in log), log)
+                self.assertTrue(Path(d).exists())
+            finally:
+                os.chdir(old)
+
+    def test_ordinary_deletes_still_work(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / 'build'
+            (target / 'sub').mkdir(parents=True)
+            ok, _ = run(Step('delete', {'path': str(target)}))
+            self.assertTrue(ok)
+            self.assertFalse(target.exists())

@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A file step with a blank path acted on the folder Forge was running in: a blank **delete** step deleted its contents. Blank paths are now refused, and a delete may not target a drive root, your home folder, the folder Forge runs in, or a folder containing one of those.
+
 ### Added
 - `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`, `docs/V1_RELEASE_CHECKLIST.md` and `docs/RECORDING_GUIDE.md`.
 - README: a comparison with the well-known alternatives, and links to the rest of the Depot suite.

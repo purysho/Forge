@@ -86,19 +86,38 @@ class WorkflowRunner:
                 return
             if step.timeout and time.monotonic()-start>step.timeout:self._halt(reader); raise TimeoutError(f"Command exceeded {step.timeout:g}s timeout")
             time.sleep(.05)
+    @staticmethod
+    def _path(step,key):
+        """A path from a step's config. An empty value is refused: Path("") means
+        the current folder, so a blank field would otherwise act on wherever
+        Forge happens to be running."""
+        raw=str(step.config.get(key,"") or "").strip()
+        if not raw: raise ValueError(f"{key.capitalize()} is empty")
+        return Path(raw).expanduser()
+    @staticmethod
+    def _refuse_dangerous_delete(p):
+        """A delete may not take out a drive root, your home folder, the folder
+        Forge runs in, or any folder that contains one of those."""
+        resolved=p.resolve()
+        for keep in (Path.home().resolve(),Path.cwd().resolve()):
+            if keep.is_relative_to(resolved):
+                raise ValueError(f"Refusing to delete {resolved}: it contains your home folder or the folder Forge is running in")
+        if resolved==Path(resolved.anchor):
+            raise ValueError(f"Refusing to delete {resolved}: it is a drive root")
     def _step_copy(self,step):
-        s=Path(str(step.config.get("source",""))).expanduser(); t=Path(str(step.config.get("target",""))).expanduser()
+        s=self._path(step,"source"); t=self._path(step,"target")
         if s.is_dir(): shutil.copytree(s,t,dirs_exist_ok=True)
         else:t.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(s,t)
     def _step_move(self,step):
-        s=Path(str(step.config.get("source",""))).expanduser(); t=Path(str(step.config.get("target",""))).expanduser(); t.parent.mkdir(parents=True,exist_ok=True); shutil.move(str(s),str(t))
-    def _step_mkdir(self,step): Path(str(step.config.get("path",""))).expanduser().mkdir(parents=True,exist_ok=True)
+        s=self._path(step,"source"); t=self._path(step,"target"); t.parent.mkdir(parents=True,exist_ok=True); shutil.move(str(s),str(t))
+    def _step_mkdir(self,step): self._path(step,"path").mkdir(parents=True,exist_ok=True)
     def _step_write(self,step):
-        p=Path(str(step.config.get("path",""))).expanduser(); p.parent.mkdir(parents=True,exist_ok=True); mode="a" if bool(step.config.get("append",False)) else "w"
+        p=self._path(step,"path"); p.parent.mkdir(parents=True,exist_ok=True); mode="a" if bool(step.config.get("append",False)) else "w"
         with p.open(mode,encoding="utf-8") as h:h.write(str(step.config.get("content","")))
     def _step_delete(self,step):
-        p=Path(str(step.config.get("path",""))).expanduser()
+        p=self._path(step,"path")
         if not p.exists(): return
+        self._refuse_dangerous_delete(p)
         shutil.rmtree(p) if p.is_dir() else p.unlink()
     def _step_http(self,step):
         url=str(step.config.get("url","")).strip(); method=str(step.config.get("method","GET")).upper(); headers=step.config.get("headers",{}); body=str(step.config.get("body",""))
